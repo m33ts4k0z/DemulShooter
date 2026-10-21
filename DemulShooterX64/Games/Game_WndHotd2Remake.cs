@@ -31,6 +31,9 @@ namespace DemulShooterX64.Games
             public byte[] Damaged = null;
             public byte[] Life = null;
             public int[] Ammo = null;
+            //Not in the home game : set by an arcade mod plugin, if any
+            public byte[] Start_Led = null;
+            public int Credits = 0;
 
             public OutputData(int PlayerNumber) : base(PlayerNumber)
             {
@@ -103,6 +106,8 @@ namespace DemulShooterX64.Games
         protected override void CreateOutputList()
         {
             _Outputs = new List<GameOutput>();
+            _Outputs.Add(new GameOutput(OutputId.P1_LmpStart));
+            _Outputs.Add(new GameOutput(OutputId.P2_LmpStart));
             _Outputs.Add(new GameOutput(OutputId.P1_Ammo));
             _Outputs.Add(new GameOutput(OutputId.P2_Ammo));
             _Outputs.Add(new GameOutput(OutputId.P1_Clip));
@@ -113,6 +118,7 @@ namespace DemulShooterX64.Games
             _Outputs.Add(new GameOutput(OutputId.P2_Life));
             _Outputs.Add(new AsyncGameOutput(OutputId.P1_Damaged, Configurator.GetInstance().OutputCustomDamagedDelay, 100, 0));
             _Outputs.Add(new AsyncGameOutput(OutputId.P2_Damaged, Configurator.GetInstance().OutputCustomDamagedDelay, 100, 0));
+            _Outputs.Add(new GameOutput(OutputId.Credits));
         }
 
         /// <summary>
@@ -128,6 +134,11 @@ namespace DemulShooterX64.Games
             if (e.Packet.GetHeader() == DsTcp_TcpPacket.PacketHeader.Outputs)
             {
                 _OutputData.Update(e.Packet.GetPayload());
+
+                //START lamps and credits are only available with an arcade mod plugin
+                SetOutputValue(OutputId.P1_LmpStart, ((OutputData)_OutputData).Start_Led[0]);
+                SetOutputValue(OutputId.P2_LmpStart, ((OutputData)_OutputData).Start_Led[1]);
+                SetOutputValue(OutputId.Credits, ((OutputData)_OutputData).Credits);
 
                 SetOutputValue(OutputId.P1_Ammo, ((OutputData)_OutputData).Ammo[0]);
                 SetOutputValue(OutputId.P2_Ammo, ((OutputData)_OutputData).Ammo[1]);
