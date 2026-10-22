@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -208,6 +209,11 @@ namespace BepInEx_DemulShooter_Plugin
                 if (!MP_SaveDataHandler.LastPlayedCampaign.IsMultiplayerCampaign || MP_GameManager.IsGameplayFinished || MP_GameManager.IsLevelCompleted || MP_ControllerDisconnectedPopup.IsVisible)
                     return;
 
+                //Same as the game : a player out of the game after his last continue can't join again,
+                //and nobody can join while every player is dead (the game is stopped, waiting for a continue)
+                if (GamePlayer.HasDied || CR_Player.GetAlivePlayerCount() == 0)
+                    return;
+
                 MyLogger.LogMessage("DemulShooter_Plugin.HandleStartButton() => " + Player.ToString() + " joining the game");
                 if (Player == PlayerType.Player2)
                     CR_GameManager.SetMultiplayerActive(true);
@@ -219,6 +225,9 @@ namespace BepInEx_DemulShooter_Plugin
                 PluginControllers[(int)Player].GetButtonDown(PluginController.MyInputButtons.Trigger);
                 PluginControllers[(int)Player].GetButtonDown(PluginController.MyInputButtons.Reload);
                 PluginControllers[(int)Player].GetButtonDown(PluginController.MyInputButtons.Action);
+                mCR_Player.IsHoldingFire[(int)Player] = false;
+
+                Instance.StartCoroutine(ShowAmmoAfterJoin(GamePlayer));
             }
 
             if (GamePlayer.IsActivated && GamePlayer.HasDied && (MP_InputManager.ActiveInputMaps & InputMapsFlag.DeathScreen) != 0)
@@ -370,6 +379,19 @@ namespace BepInEx_DemulShooter_Plugin
                 case KeyCode.KeypadPeriod: return Key.NumpadPeriod;
                 default: return Key.None;
             }
+        }
+
+        /// <summary>
+        /// Game bug : the bullets display is hiding itself when it is started for the first time (CR_AmmoController.Start()),
+        /// and only shown again at the end of the next cutscene. A player joining during a chapter had no bullets displayed until then
+        /// </summary>
+        private static IEnumerator ShowAmmoAfterJoin(CR_Player GamePlayer)
+        {
+            //Start() is called once the bullets display is active, at the latest on the next frame
+            yield return null;
+            yield return null;
+            if (GamePlayer != null && GamePlayer.IsActivated && GamePlayer.WeaponHolder != null && !CR_Cutscene.IsCutsceneActive)
+                GamePlayer.WeaponHolder.ToggleAmmoController(true);
         }
 
         /// <summary>
