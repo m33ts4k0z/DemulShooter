@@ -1,0 +1,122 @@
+# Unofficial build of this branch : argonlefou's DemulShooter + THE HOUSE OF THE DEAD 2: Remake support.
+# Published as a GitHub release with an add-on zip, to unzip over the official DemulShooter release :
+# DemulShooterX64.exe, DemulShooter_GUI.exe, DsCore.dll and the Unity\Hotd2Remake plugin package (BepInEx 5.4.21 + plugin)
+name: Build
+
+on:
+  push:
+    branches: [hotd2r-release]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      # Whole history and tags, for the release notes
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check that the game DLLs are stripped reference copies
+        shell: pwsh
+        run: |
+          $real = Get-ChildItem UnityPlugins/UnityPlugin_BepInEx_HOTD2R/UnityLibs -Filter *.dll |
+            Where-Object { $_.Name -notin '0Harmony.dll', 'BepInEx.dll' } |
+            Where-Object { -not [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($_.FullName)).Contains('ReferenceAssemblyAttribute') }
+          foreach ($dll in $real) {
+            Write-Output "::error file=UnityPlugins/UnityPlugin_BepInEx_HOTD2R/UnityLibs/$($dll.Name)::$($dll.Name) is not a stripped reference assembly, the game's real DLLs must not be committed"
+          }
+          if ($real) { exit 1 }
+
+      # Same reference assemblies as a local build, whatever targeting packs the runner has
+      - name: Get the .NET Framework 4.8 reference assemblies
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://www.nuget.org/api/v2/package/Microsoft.NETFramework.ReferenceAssemblies.net48/1.0.3 -OutFile "$env:RUNNER_TEMP/net48.zip"
+          Expand-Archive "$env:RUNNER_TEMP/net48.zip" "$env:RUNNER_TEMP/net48"
+          "NET48_ROOT=$env:RUNNER_TEMP\net48\build" >> $env:GITHUB_ENV
+
+      - name: Build DemulShooter and the House of the Dead 2 Remake plugin
+        shell: pwsh
+        run: |
+          $msbuild = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+          & $msbuild DemulShooter.sln /p:Configuration=Release /p:Platform=x86 "/p:TargetFrameworkRootPath=$env:NET48_ROOT" /m /nologo /v:minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $msbuild UnityPlugins/UnityPlugin_BepInEx_HOTD2R/UnityPlugin_BepInEx_Hotd2Remake.csproj /p:Configuration=Release "/p:TargetFrameworkRootPath=$env:NET48_ROOT" /nologo /v:minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Same layout as the DemulShooter folder, with the plugin package like the other Unity games
+      - name: Package the add-on
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory package/Unity/Hotd2Remake/BepInEx/plugins -Force | Out-Null
+          Copy-Item DemulShooterX64/bin/x64/Release/DemulShooterX64.exe, DemulShooter_GUI/bin/Release/DemulShooter_GUI.exe, DsCore/bin/Release/DsCore.dll package
+          Invoke-WebRequest https://github.com/BepInEx/BepInEx/releases/download/v5.4.21/BepInEx_x64_5.4.21.0.zip -OutFile "$env:RUNNER_TEMP/bepinex.zip"
+          Expand-Archive "$env:RUNNER_TEMP/bepinex.zip" package/Unity/Hotd2Remake
+          Remove-Item package/Unity/Hotd2Remake/changelog.txt -ErrorAction SilentlyContinue
+          $version = (Get-Item package/Unity/Hotd2Remake/BepInEx/core/BepInEx.dll).VersionInfo.FileVersion
+          if ($version -ne '5.4.21.0') { Write-Output "::error::Unexpected BepInEx version $version"; exit 1 }
+          Copy-Item ReleaseFiles/* package -Recurse -Force
+          Copy-Item UnityPlugins/UnityPlugin_BepInEx_HOTD2R/bin/Release/Hotd2Remake_BepInEx_DemulShooter_Plugin.dll, UnityPlugins/UnityPlugin_BepInEx_HOTD2R/Hotd2Remake_BepInEx_DemulShooter_Plugin.ini package/Unity/Hotd2Remake/BepInEx/plugins
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DemulShooter_HOTD2R
+          path: package/
+          if-no-files-found: error
+
+      # Tag from the DemulShooter version and the date (v17.10-hotd2r.2026.10.22, then .2, .3... on the same day),
+      # notes from the commits since the previous release (or since argonlefou's code for the first one)
+      - name: Create the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8
+          if (git tag --points-at HEAD --list 'v*-hotd2r.*') {
+            Write-Output "This commit is already released"
+            exit 0
+          }
+          $dsVersion = ((Get-Item package/DemulShooterX64.exe).VersionInfo.FileVersion -split '\.')[0..1] -join '.'
+          $prev = git tag --merged HEAD --list 'v*-hotd2r.*' --sort=-committerdate | Select-Object -First 1
+          if ($prev) {
+            $range = "$prev..HEAD"
+          } else {
+            git fetch --quiet https://github.com/argonlefou/DemulShooter.git master
+            $range = (git merge-base HEAD FETCH_HEAD) + "..HEAD"
+          }
+          $date = (Get-Date).ToUniversalTime().ToString('yyyy.MM.dd')
+          $tag = "v$dsVersion-hotd2r.$date"
+          $n = 1
+          while (git tag --list $tag) { $n++; $tag = "v$dsVersion-hotd2r.$date.$n" }
+          $repoUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY"
+
+          $notes = @(
+            "Unofficial build of [argonlefou's DemulShooter](https://github.com/argonlefou/DemulShooter) v$dsVersion with THE HOUSE OF THE DEAD 2: Remake support (``-target=windows -rom=hotd2r``).",
+            '',
+            "Install the [official DemulShooter release](https://github.com/argonlefou/DemulShooter/releases) first, then unzip this archive in the same folder (see README_HOTD2R.txt).",
+            '',
+            '### Changes')
+          foreach ($sha in git log --no-merges --format=%H $range) {
+            $notes += "- $(git log -1 --format=%s $sha) ([``$($sha.Substring(0, 7))``]($repoUrl/commit/$sha))"
+          }
+          $notes | Set-Content "$env:RUNNER_TEMP/notes.md"
+
+          $zip = "DemulShooter_v$($dsVersion)_HOTD2R_$($tag.Substring($tag.IndexOf('hotd2r.') + 7)).zip"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          # Entries with '/' : with '\' some unzip tools make "Unity\Hotd2Remake\..." file names instead of folders
+          $root = (Resolve-Path package).Path
+          $archive = [IO.Compression.ZipFile]::Open("$PWD/$zip", 'Create')
+          foreach ($file in Get-ChildItem package -Recurse -File -Force) {
+            $entry = $file.FullName.Substring($root.Length + 1).Replace('\', '/')
+            [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $file.FullName, $entry) | Out-Null
+          }
+          $archive.Dispose()
+          gh release create $tag $zip --target $env:GITHUB_SHA --title "DemulShooter v$dsVersion + House of the Dead 2 Remake ($($tag.Substring($tag.IndexOf('hotd2r.') + 7)))" --notes-file "$env:RUNNER_TEMP/notes.md"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
