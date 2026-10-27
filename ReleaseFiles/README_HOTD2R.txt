@@ -1,6 +1,6 @@
 Unofficial DemulShooter build with THE HOUSE OF THE DEAD 2: Remake support (rom hotd2r)
 Based on argonlefou's DemulShooter : https://github.com/argonlefou/DemulShooter
-Source of this build : https://github.com/m33ts4k0z/DemulShooter/tree/hotd2-remake-support
+Source of this build : https://github.com/m33ts4k0z/DemulShooter/tree/master
 
 Installation :
 1. Install argonlefou's official DemulShooter release first : https://github.com/argonlefou/DemulShooter/releases
